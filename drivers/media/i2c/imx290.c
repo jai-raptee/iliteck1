@@ -23,6 +23,7 @@
 #include <linux/gpio/consumer.h>
 #include <linux/i2c.h>
 #include <linux/module.h>
+#include <linux/moduleparam.h>
 #include <linux/of_device.h>
 #include <linux/pm_runtime.h>
 #include <linux/regmap.h>
@@ -69,6 +70,10 @@ enum imx290_clk_index {
 #define IMX290_PIXEL_ARRAY_TOP		12U
 #define IMX290_PIXEL_ARRAY_WIDTH	1937U
 #define IMX290_PIXEL_ARRAY_HEIGHT	1097U
+
+static bool hcgmode = false;
+module_param(hcgmode, bool, 0664);
+MODULE_PARM_DESC(hcgmode, "Enable HCG mode");
 
 static const char * const imx290_supply_name[] = {
 	"vdda",
@@ -248,7 +253,6 @@ static const struct imx290_regval imx290_74_250mhz_clock_1080p[] = {
 
 static const struct imx290_regval imx290_1080p_common_settings[] = {
 	/* mode settings */
-	{ IMX290_FR_FDG_SEL, 0x01 },
 	{ 0x3007, 0x00 },
 	{ 0x303a, 0x0c },
 	{ 0x3414, 0x0a },
@@ -332,7 +336,6 @@ static const struct imx290_regval imx290_74_250mhz_clock_720p[] = {
 
 static const struct imx290_regval imx290_720p_common_settings[] = {
 	/* mode settings */
-	{ IMX290_FR_FDG_SEL, 0x01 },
 	{ 0x3007, 0x10 },
 	{ 0x303a, 0x06 },
 	{ 0x3414, 0x04 },
@@ -1065,6 +1068,12 @@ static int imx290_start_streaming(struct imx290 *imx290)
 	}
 
 	/* Apply default values of current mode */
+	ret = imx290_write_reg(imx290, IMX290_FR_FDG_SEL, hcgmode ? 0x11 : 0x01);
+	if (ret < 0) {
+		dev_err(imx290->dev, "Could not set current mode\n");
+		return ret;
+	}
+
 	ret = imx290_set_register_array(imx290,
 					imx290->current_mode->mode_data,
 					imx290->current_mode->mode_data_size);
@@ -1255,6 +1264,7 @@ static int imx290_probe(struct i2c_client *client)
 	const struct imx290_mode *mode;
 	struct imx290 *imx290;
 	s64 fq;
+	u8 max_gain;
 	int ret;
 
 	imx290 = devm_kzalloc(dev, sizeof(*imx290), GFP_KERNEL);
@@ -1336,6 +1346,16 @@ static int imx290_probe(struct i2c_client *client)
 		goto free_err;
 	}
 
+	max_gain = 100;
+	if (fwnode_property_present(dev_fwnode(dev), "max-gain")) {
+		ret = fwnode_property_read_u8(dev_fwnode(dev), "max-gain",
+									&max_gain);
+		if (ret) {
+			dev_err(dev, "Could not get max gain\n");
+			goto free_err;
+		}
+	}
+
 	ret = clk_set_rate(imx290->xclk, imx290->xclk_freq);
 	if (ret) {
 		dev_err(dev, "Could not set xclk frequency\n");
@@ -1367,7 +1387,7 @@ static int imx290_probe(struct i2c_client *client)
 	v4l2_ctrl_handler_init(&imx290->ctrls, 11);
 
 	v4l2_ctrl_new_std(&imx290->ctrls, &imx290_ctrl_ops,
-			  V4L2_CID_ANALOGUE_GAIN, 0, 100, 1, 0);
+			  V4L2_CID_ANALOGUE_GAIN, 0, max_gain, 1, 0);
 
 	mode = imx290->current_mode;
 	imx290->hblank = v4l2_ctrl_new_std(&imx290->ctrls, &imx290_ctrl_ops,
