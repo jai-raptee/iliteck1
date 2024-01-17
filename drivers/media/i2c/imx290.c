@@ -13,6 +13,7 @@
 #include <linux/gpio/consumer.h>
 #include <linux/i2c.h>
 #include <linux/module.h>
+#include <linux/moduleparam.h>
 #include <linux/of.h>
 #include <linux/pm_runtime.h>
 #include <linux/regmap.h>
@@ -41,6 +42,8 @@
 #define IMX290_WINMODE_720P				(1 << 4)
 #define IMX290_WINMODE_CROP				(4 << 4)
 #define IMX290_FR_FDG_SEL				CCI_REG8(0x3009)
+#define IMX290_FDG_HCG					BIT(4)
+#define IMX290_FDG_LCG					0
 #define IMX290_BLKLEVEL					CCI_REG16(0x300a)
 #define IMX290_GAIN					CCI_REG8(0x3014)
 #define IMX290_VMAX					CCI_REG24(0x3018)
@@ -161,6 +164,10 @@
 #define IMX290_BLACK_LEVEL_DEFAULT			3840
 
 #define IMX290_NUM_SUPPLIES				3
+
+static int hgc_threshold = 80;
+module_param(hgc_threshold, int, 0664);
+MODULE_PARM_DESC(hgc_threshold, "Analog gain threshold to enable HCG mode");
 
 enum imx290_colour_variant {
 	IMX290_VARIANT_COLOUR,
@@ -649,7 +656,6 @@ static int imx290_set_data_lanes(struct imx290 *imx290)
 		  &ret);
 	cci_write(imx290->regmap, IMX290_CSI_LANE_MODE, imx290->nlanes - 1,
 		  &ret);
-	cci_write(imx290->regmap, IMX290_FR_FDG_SEL, 0x01, &ret);
 
 	return ret;
 }
@@ -763,6 +769,10 @@ static int imx290_set_ctrl(struct v4l2_ctrl *ctrl)
 	switch (ctrl->id) {
 	case V4L2_CID_ANALOGUE_GAIN:
 		ret = cci_write(imx290->regmap, IMX290_GAIN, ctrl->val, NULL);
+
+		cci_write(imx290->regmap, IMX290_FR_FDG_SEL,
+			  0x01 | (ctrl->val >= hgc_threshold) ?
+					IMX290_FDG_HCG : IMX290_FDG_LCG, &ret);
 		break;
 
 	case V4L2_CID_VBLANK:
